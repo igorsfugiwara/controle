@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <meta name="theme-color" content="#0e0e10">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <title>Controle</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/icon-192.png">
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <nav class="tabs" id="tabs" aria-label="Aparelhos"></nav>
+    <button class="icon-btn" id="open-settings" aria-label="Aparelhos e ajustes">
+      <svg viewBox="0 0 24 24"><use href="#i-gear"/></svg>
+    </button>
+  </header>
+
+  <div class="conn" id="conn" hidden>Sem conexão com o computador. Tentando de novo…</div>
+
+  <main id="stage"></main>
+
+  <!-- folha de baixo (entradas, apps, teclado, touchpad, números) -->
+  <div class="sheet-backdrop" id="sheet-backdrop" hidden></div>
+  <section class="sheet" id="sheet" hidden role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+    <div class="sheet__grip"></div>
+    <header class="sheet__head">
+      <h2 id="sheet-title"></h2>
+      <button class="icon-btn" data-close-sheet aria-label="Fechar"><svg viewBox="0 0 24 24"><use href="#i-x"/></svg></button>
+    </header>
+    <div class="sheet__body" id="sheet-body"></div>
+  </section>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <template id="tpl-fire">
+    <div class="remote remote--fire">
+      <div class="row row--top">
+        <button class="key key--power" data-key="power" aria-label="Liga/desliga o Fire"><svg viewBox="0 0 24 24"><use href="#i-power"/></svg></button>
+        <button class="key key--voice" data-sheet="keyboard" aria-label="Digitar"><svg viewBox="0 0 24 24"><use href="#i-keyboard"/></svg></button>
+        <button class="key key--small" data-key="settings" aria-label="Configurações"><svg viewBox="0 0 24 24"><use href="#i-gear"/></svg></button>
+      </div>
+
+      <div class="dpad" aria-label="Direcional">
+        <button class="dpad__dir dpad__dir--up" data-key="up" data-repeat aria-label="Cima"><i></i></button>
+        <button class="dpad__dir dpad__dir--right" data-key="right" data-repeat aria-label="Direita"><i></i></button>
+        <button class="dpad__dir dpad__dir--down" data-key="down" data-repeat aria-label="Baixo"><i></i></button>
+        <button class="dpad__dir dpad__dir--left" data-key="left" data-repeat aria-label="Esquerda"><i></i></button>
+        <button class="dpad__ok" data-key="select" aria-label="Selecionar"></button>
+      </div>
+
+      <div class="row">
+        <button class="key" data-key="back" aria-label="Voltar"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg></button>
+        <button class="key" data-key="home" data-long-key="home" aria-label="Início (segure para o menu rápido)"><svg viewBox="0 0 24 24"><use href="#i-home"/></svg></button>
+        <button class="key" data-key="menu" aria-label="Menu"><svg viewBox="0 0 24 24"><use href="#i-menu"/></svg></button>
+      </div>
+      <div class="row">
+        <button class="key" data-key="rewind" data-repeat aria-label="Voltar o vídeo"><svg viewBox="0 0 24 24"><use href="#i-rew"/></svg></button>
+        <button class="key" data-key="playPause" aria-label="Play e pausa"><svg viewBox="0 0 24 24"><use href="#i-playpause"/></svg></button>
+        <button class="key" data-key="fastForward" data-repeat aria-label="Avançar o vídeo"><svg viewBox="0 0 24 24"><use href="#i-ff"/></svg></button>
+      </div>
+
+      <div class="row row--vol">
+        <button class="key key--pill" data-key="volumeDown" data-repeat aria-label="Abaixar volume"><svg viewBox="0 0 24 24"><use href="#i-minus"/></svg></button>
+        <button class="key" data-key="mute" aria-label="Mudo"><svg viewBox="0 0 24 24"><use href="#i-mute"/></svg></button>
+        <button class="key key--pill" data-key="volumeUp" data-repeat aria-label="Aumentar volume"><svg viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>
+      </div>
+      <p class="vol-note" data-vol-note></p>
+
+      <div class="row row--extra">
+        <button class="key key--small" data-key="guide" aria-label="Guia ao vivo"><svg viewBox="0 0 24 24"><use href="#i-guide"/></svg></button>
+        <button class="key key--small" data-key="search" aria-label="Buscar"><svg viewBox="0 0 24 24"><use href="#i-search"/></svg></button>
+        <button class="key key--small" data-sheet="inputs" data-needs="lg" aria-label="Entradas da TV"><svg viewBox="0 0 24 24"><use href="#i-input"/></svg></button>
+        <button class="key key--small" data-key="captions" aria-label="Legendas"><svg viewBox="0 0 24 24"><use href="#i-cc"/></svg></button>
+      </div>
+
+      <div class="apps" data-apps></div>
+    </div>
+  </template>
+
+  <template id="tpl-lg">
+    <div class="remote remote--lg">
+      <div class="row row--top">
+        <button class="key key--power" data-action="power" aria-label="Liga/desliga a TV"><svg viewBox="0 0 24 24"><use href="#i-power"/></svg></button>
+        <button class="key key--label" data-sheet="inputs" aria-label="Entradas"><svg viewBox="0 0 24 24"><use href="#i-input"/></svg><span>Entrada</span></button>
+        <button class="key key--small" data-key="QMENU" aria-label="Ajustes rápidos"><svg viewBox="0 0 24 24"><use href="#i-gear"/></svg></button>
+      </div>
+
+      <div class="rockers">
+        <div class="rocker">
+          <button data-action="volumeUp" data-repeat aria-label="Aumentar volume"><svg viewBox="0 0 24 24"><use href="#i-plus"/></svg></button>
+          <span class="rocker__label">VOL <b data-vol></b></span>
+          <button data-action="volumeDown" data-repeat aria-label="Abaixar volume"><svg viewBox="0 0 24 24"><use href="#i-minus"/></svg></button>
+        </div>
+        <div class="rocker-mid">
+          <button class="key" data-action="mute" aria-label="Mudo"><svg viewBox="0 0 24 24"><use href="#i-mute"/></svg></button>
+          <button class="key" data-sheet="numbers" aria-label="Números"><span class="key__txt">123</span></button>
+          <button class="key" data-sheet="apps" aria-label="Apps"><svg viewBox="0 0 24 24"><use href="#i-apps"/></svg></button>
+        </div>
+        <div class="rocker">
+          <button data-action="channelUp" data-repeat aria-label="Próximo canal"><svg viewBox="0 0 24 24"><use href="#i-up"/></svg></button>
+          <span class="rocker__label">CH</span>
+          <button data-action="channelDown" data-repeat aria-label="Canal anterior"><svg viewBox="0 0 24 24"><use href="#i-down"/></svg></button>
+        </div>
+      </div>
+
+      <div class="dpad" aria-label="Direcional">
+        <button class="dpad__dir dpad__dir--up" data-key="UP" data-repeat aria-label="Cima"><i></i></button>
+        <button class="dpad__dir dpad__dir--right" data-key="RIGHT" data-repeat aria-label="Direita"><i></i></button>
+        <button class="dpad__dir dpad__dir--down" data-key="DOWN" data-repeat aria-label="Baixo"><i></i></button>
+        <button class="dpad__dir dpad__dir--left" data-key="LEFT" data-repeat aria-label="Esquerda"><i></i></button>
+        <button class="dpad__ok" data-key="ENTER" aria-label="OK"><span>OK</span></button>
+      </div>
+
+      <div class="row">
+        <button class="key" data-key="BACK" aria-label="Voltar"><svg viewBox="0 0 24 24"><use href="#i-back"/></svg></button>
+        <button class="key" data-key="HOME" aria-label="Início"><svg viewBox="0 0 24 24"><use href="#i-home"/></svg></button>
+        <button class="key" data-key="EXIT" aria-label="Sair"><span class="key__txt">SAIR</span></button>
+      </div>
+
+      <div class="row row--colors">
+        <button class="color color--red" data-key="RED" aria-label="Vermelho"></button>
+        <button class="color color--green" data-key="GREEN" aria-label="Verde"></button>
+        <button class="color color--yellow" data-key="YELLOW" aria-label="Amarelo"></button>
+        <button class="color color--blue" data-key="BLUE" aria-label="Azul"></button>
+      </div>
+
+      <div class="row">
+        <button class="key key--small" data-key="REWIND" data-repeat aria-label="Voltar o vídeo"><svg viewBox="0 0 24 24"><use href="#i-rew"/></svg></button>
+        <button class="key key--small" data-key="PLAY" aria-label="Play"><svg viewBox="0 0 24 24"><use href="#i-play"/></svg></button>
+        <button class="key key--small" data-key="PAUSE" aria-label="Pausa"><svg viewBox="0 0 24 24"><use href="#i-pause"/></svg></button>
+        <button class="key key--small" data-key="FASTFORWARD" data-repeat aria-label="Avançar o vídeo"><svg viewBox="0 0 24 24"><use href="#i-ff"/></svg></button>
+      </div>
+
+      <div class="row row--extra">
+        <button class="key key--small" data-sheet="touchpad" aria-label="Touchpad"><svg viewBox="0 0 24 24"><use href="#i-pointer"/></svg></button>
+        <button class="key key--small" data-sheet="keyboard" aria-label="Digitar"><svg viewBox="0 0 24 24"><use href="#i-keyboard"/></svg></button>
+        <button class="key key--small" data-key="INFO" aria-label="Informações"><span class="key__txt">i</span></button>
+        <button class="key key--small" data-key="GUIDE" aria-label="Guia"><svg viewBox="0 0 24 24"><use href="#i-guide"/></svg></button>
+        <button class="key key--small" data-action="screenOff" aria-label="Apagar só a tela"><svg viewBox="0 0 24 24"><use href="#i-screenoff"/></svg></button>
+      </div>
+    </div>
+  </template>
+
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3v8M6.3 6.3a8 8 0 1 0 11.4 0" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-gear" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3.2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M12 2.5v2.6M12 18.9v2.6M21.5 12h-2.6M5.1 12H2.5M18.7 5.3l-1.8 1.8M7.1 16.9l-1.8 1.8M18.7 18.7l-1.8-1.8M7.1 7.1 5.3 5.3" stroke="currentColor" stroke-width="2" stroke-linecap="round"/><circle cx="12" cy="12" r="6.6" fill="none" stroke="currentColor" stroke-width="2"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-back" viewBox="0 0 24 24"><path d="M9 7 4 12l5 5M4.5 12H14a6 6 0 0 1 0 12" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 -3)"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11 12 4l8 7v8.5a.5.5 0 0 1-.5.5H15v-6H9v6H4.5a.5.5 0 0 1-.5-.5Z" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linejoin="round"/></symbol>
+      <symbol id="i-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-rew" viewBox="0 0 24 24"><path d="M11 6 3 12l8 6zM21 6l-8 6 8 6z" fill="currentColor"/></symbol>
+      <symbol id="i-ff" viewBox="0 0 24 24"><path d="M13 6l8 6-8 6zM3 6l8 6-8 6z" fill="currentColor"/></symbol>
+      <symbol id="i-playpause" viewBox="0 0 24 24"><path d="M3 5.5 11.5 12 3 18.5z" fill="currentColor"/><path d="M15 6v12M20 6v12" stroke="currentColor" stroke-width="2.6"/></symbol>
+      <symbol id="i-play" viewBox="0 0 24 24"><path d="M7 5l12 7-12 7z" fill="currentColor"/></symbol>
+      <symbol id="i-pause" viewBox="0 0 24 24"><path d="M8 5v14M16 5v14" stroke="currentColor" stroke-width="3"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+      <symbol id="i-minus" viewBox="0 0 24 24"><path d="M5 12h14" stroke="currentColor" stroke-width="2.4" stroke-linecap="round"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="m6 15 6-6 6 6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-mute" viewBox="0 0 24 24"><path d="M4 9.5h3.5L12 5.5v13l-4.5-4H4z" fill="currentColor"/><path d="m16 9.5 5 5M21 9.5l-5 5" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="2.5" y="6" width="19" height="12" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M6 10h.01M9.5 10h.01M13 10h.01M16.5 10h.01M7.5 14.2h9" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-input" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 20h8M12 7.5v6M9.5 11l2.5 2.5 2.5-2.5" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+      <symbol id="i-apps" viewBox="0 0 24 24"><path d="M5 5h4v4H5zM15 5h4v4h-4zM5 15h4v4H5zM15 15h4v4h-4z" fill="currentColor"/></symbol>
+      <symbol id="i-guide" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2" fill="none" stroke="currentColor" stroke-width="2"/><path d="M3 9h18M8 9v11" stroke="currentColor" stroke-width="2"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6" fill="none" stroke="currentColor" stroke-width="2.2"/><path d="m15 15 5.5 5.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></symbol>
+      <symbol id="i-cc" viewBox="0 0 24 24"><rect x="2.5" y="5" width="19" height="14" rx="2.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M10.5 10.2a2.3 2.3 0 1 0 0 3.6M17.5 10.2a2.3 2.3 0 1 0 0 3.6" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"/></symbol>
+      <symbol id="i-pointer" viewBox="0 0 24 24"><path d="M6 3.5 18 13l-5.3.6 3.2 6.4-2.6 1.3-3.2-6.4L6 19z" fill="currentColor"/></symbol>
+      <symbol id="i-screenoff" viewBox="0 0 24 24"><rect x="3" y="4.5" width="18" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="2"/><path d="M8 20h8M4 3l16 16" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></symbol>
+      <symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v5h-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></symbol>
+    </defs>
+  </svg>
+
+  <script type="module" src="/app.js"></script>
+</body>
+</html>

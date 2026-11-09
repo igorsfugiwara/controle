@@ -1,0 +1,14 @@
+[Unit]
+Description=Controle remoto (ponte da TV e do Fire Stick)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/github/controle
+ExecStart=/usr/bin/env node src/server.mjs
+Restart=always
+RestartSec=3
+Environment=PORT=8787
+
+[Install]
+WantedBy=default.target
