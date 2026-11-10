@@ -46,14 +46,18 @@ export async function discover(timeoutMs = 3000) {
   const found = [];
   for (const [ip, locs] of locations) {
     let info = { name: '', manufacturer: '', model: '', udn: '' };
+    let raw = '';
     for (const loc of locs) {
       const desc = await describe(loc);
-      if (desc.manufacturer || desc.name) { info = desc; break; }
+      raw += desc.raw;
+      if (!info.manufacturer && (desc.manufacturer || desc.name)) info = desc;
     }
+    delete info.raw;
     const stList = [...(sts.get(ip) ?? [])].join(' ');
     const maker = info.manufacturer.toLowerCase();
     let kind = 'outro';
-    if (stList.includes('lge-com') || maker.includes('lg electronics')) kind = 'lg';
+    if (stList.includes('lge-com')) kind = 'lg';
+    else if (/^lg\b/.test(maker) || /netcast|LGE_DLNA/i.test(raw)) kind = 'netcast'; // LG de 2012–2013
     else if (maker.includes('amazon')) kind = 'fire';
     else if (maker.includes('samsung')) kind = 'samsung';
     else if (stList.includes('roku') || maker.includes('roku')) kind = 'roku';
@@ -74,9 +78,10 @@ async function describe(location) {
       manufacturer: decode(tag('manufacturer')),
       model: decode(tag('modelName')),
       udn: tag('UDN'),
+      raw: xml,
     };
   } catch {
-    return { name: '', manufacturer: '', model: '', udn: '' };
+    return { name: '', manufacturer: '', model: '', udn: '', raw: '' };
   }
 }
 

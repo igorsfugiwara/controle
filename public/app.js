@@ -71,13 +71,15 @@ function toast(text) {
 const buzz = (ms = 12) => { try { navigator.vibrate?.(ms); } catch {} };
 
 const selected = () => devices.find((d) => d.id === selectedId) ?? devices[0];
-const lgDevice = () => devices.find((d) => d.kind === 'lg');
+const isTv = (d) => d && (d.kind === 'lg' || d.kind === 'netcast');
+const lgDevice = () => devices.find(isTv);
+const KIND_LABEL = { lg: 'TV LG', netcast: 'TV LG (2012–2013)', fire: 'Fire Stick' };
 
 const STATE_TEXT = {
   conectada: 'Conectado',
   conectando: 'Conectando…',
   'aguardando-permissao': 'Aceite o aviso na TV',
-  'sem-adb': 'Depuração ADB desligada',
+  'precisa-pin': 'Falta parear com PIN',
   desconectada: 'Desconectado',
 };
 
@@ -115,7 +117,7 @@ function renderMain() {
   const key = `${cur.id}`;
   if (renderedKey !== key) {
     renderedKey = key;
-    const tpl = $(cur.kind === 'lg' ? '#tpl-lg' : '#tpl-fire').content.cloneNode(true);
+    const tpl = $(isTv(cur) ? '#tpl-lg' : '#tpl-fire').content.cloneNode(true);
     stage.replaceChildren(h('div', { id: 'notice-slot' }), tpl);
     bindRemote($('.remote', stage), cur);
     appsLoadedFor = null;
@@ -137,6 +139,9 @@ function updateStatus(cur) {
   const note = $('[data-vol-note]', remote);
   if (note) note.textContent = lg?.state === 'conectada' ? `Volume e mudo vão para a ${lg.name}` : '';
   for (const el of remote.querySelectorAll('[data-needs="lg"]')) el.hidden = !lg;
+  // Pelo canal do PIN o Fire não tem essas teclas; a TV antiga não recebe texto.
+  for (const el of remote.querySelectorAll('[data-adb]')) el.hidden = cur.kind === 'fire' && cur.mode === 'pin';
+  for (const el of remote.querySelectorAll('[data-webos]')) el.hidden = cur.kind === 'netcast';
 
   if (cur.kind === 'fire' && cur.state === 'conectada' && appsLoadedFor !== cur.id) loadFireApps(cur);
 }
@@ -144,6 +149,12 @@ function updateStatus(cur) {
 function noticeFor(d) {
   const retry = h('button', { class: 'btn btn--sm', onclick: () => call({ op: 'reconnect', device: d.id }).catch(() => {}) }, 'Tentar de novo');
   if (d.state === 'conectada' || d.state === 'conectando') return null;
+  if (d.kind === 'netcast') {
+    if (d.state === 'precisa-pin') return [pairBox(d)];
+    return [h('div', { class: 'notice' },
+      h('b', {}, 'TV desligada ou fora da rede. '), 'Este modelo não liga pela rede: ligue no botão da TV ou pelo Fire.',
+      h('div', { class: 'notice__actions' }, retry))];
+  }
   if (d.kind === 'lg') {
     if (d.state === 'aguardando-permissao') {
       return [h('div', { class: 'notice' }, h('b', {}, 'Olhe a TV: '), 'apareceu um aviso pedindo permissão. Aceite com o controle da TV (ou no botão dela). É só na primeira vez.')];
@@ -155,16 +166,27 @@ function noticeFor(d) {
   if (d.state === 'aguardando-permissao') {
     return [h('div', { class: 'notice' }, h('b', {}, 'Olhe a TV: '), 'o Fire pergunta se permite a depuração. Marque ', h('b', {}, '“Sempre permitir deste computador”'), ' e toque em OK.')];
   }
-  if (d.state === 'sem-adb') {
-    return [h('div', { class: 'notice notice--bad' },
-      h('b', {}, 'Falta ligar a depuração ADB no Fire (uma vez só):'),
-      h('ol', {},
-        h('li', {}, 'Configurações → Minha Fire TV → Sobre.'),
-        h('li', {}, 'Clique 7 vezes no nome do aparelho (ex.: “Fire TV Stick”) até aparecer “Você é um desenvolvedor”.'),
-        h('li', {}, 'Volte → Opções do desenvolvedor → Depuração ADB → Ativado.')),
-      h('div', { class: 'notice__actions' }, retry))];
-  }
+  if (d.state === 'precisa-pin') return [pairBox(d)];
   return [h('div', { class: 'notice notice--bad' }, h('b', {}, 'Fire Stick fora da rede. '), d.ip, h('div', { class: 'notice__actions' }, retry))];
+}
+
+function pairBox(d) {
+  const pin = h('input', { inputmode: 'numeric', maxlength: '8', placeholder: 'PIN da TV', 'aria-label': 'PIN que apareceu na TV', style: { width: '120px' } });
+  const step2 = h('div', { class: 'notice__actions add', hidden: true }, pin,
+    h('button', { class: 'btn btn--primary btn--sm', style: { height: '44px' }, onclick: () => {
+      call({ device: d.id, action: 'pairVerify', args: { pin: pin.value } }).then(() => toast('Pareado!')).catch(() => {});
+    } }, 'Confirmar'));
+  const start = h('button', { class: 'btn btn--primary btn--sm', onclick: async () => {
+    start.textContent = 'Pedindo PIN…';
+    try {
+      await call({ device: d.id, action: 'pairStart' });
+      step2.hidden = false; start.textContent = 'Mostrar outro PIN'; pin.focus();
+    } catch { start.textContent = 'Mostrar PIN na TV'; }
+  } }, 'Mostrar PIN na TV');
+  pin.addEventListener('keydown', (e) => { if (e.key === 'Enter') step2.querySelector('button').click(); });
+  return h('div', { class: 'notice' },
+    h('b', {}, `Parear com ${d.kind === 'fire' ? 'o Fire' : 'a TV'} (uma vez só): `), 'toque no botão, veja o número que aparece na TV e digite aqui.',
+    h('div', { class: 'notice__actions' }, start), step2);
 }
 
 // ---------- botões ----------
@@ -218,16 +240,35 @@ function bindRemote(root, dev) {
 }
 
 let appsLoadedFor = null;
+let fireApps = [];
+
+function appButton(dev, a, after) {
+  const btn = h('button', {
+    class: `app${a.icon ? ' app--icon' : ''}${/#fff|#ff[ef]/i.test(a.color ?? '') ? ' app--light' : ''}`,
+    style: { '--app': a.color ?? '#3a3a42' }, 'aria-label': a.title, title: a.title,
+    onclick: () => { buzz(); run(dev.id, 'launch', { id: a.id }); after?.(); },
+  });
+  if (a.icon) {
+    const img = h('img', { src: a.icon, alt: '', loading: 'lazy', referrerpolicy: 'no-referrer' });
+    img.addEventListener('error', () => { btn.classList.remove('app--icon'); btn.replaceChildren(a.title); });
+    btn.append(img);
+  } else btn.append(a.title);
+  return btn;
+}
+
+function openFireApps(dev) {
+  showSheet('Apps do Fire', h('div', { class: 'apps apps--all' }, ...fireApps.map((a) => appButton(dev, a, closeSheet))));
+}
 async function loadFireApps(dev) {
   appsLoadedFor = dev.id;
   const box = $('[data-apps]');
   if (!box) return;
   try {
     const apps = await call({ device: dev.id, action: 'apps' }, { quiet: true });
-    box.replaceChildren(...apps.slice(0, 6).map((a) => h('button', {
-      class: `app${/#fff|#ff[ef]/i.test(a.color) ? ' app--light' : ''}`, style: { '--app': a.color },
-      onclick: () => { buzz(); run(dev.id, 'launch', { id: a.id }); },
-    }, a.title)));
+    fireApps = apps;
+    const more = $('[data-sheet="fireApps"]');
+    if (more) more.hidden = apps.length <= 6;
+    box.replaceChildren(...apps.slice(0, 6).map((a) => appButton(dev, a)));
   } catch { appsLoadedFor = null; }
 }
 
@@ -255,7 +296,11 @@ for (const b of document.querySelectorAll('[data-close-sheet]')) b.addEventListe
 
 function openSheet(kind, dev) {
   if (kind === 'inputs') return openInputs();
-  if (kind === 'apps') return openLgApps(dev);
+  if (kind === 'apps') {
+    if (dev.kind === 'netcast') return run(dev.id, 'key', { key: 'APPS' });
+    return openLgApps(dev);
+  }
+  if (kind === 'fireApps') return openFireApps(dev);
   if (kind === 'numbers') return openNumbers(dev);
   if (kind === 'keyboard') return openKeyboard(dev);
   if (kind === 'touchpad') return openTouchpad(dev);
@@ -264,6 +309,7 @@ function openSheet(kind, dev) {
 async function openInputs() {
   const tv = lgDevice();
   if (!tv) return toast('Nenhuma TV LG cadastrada');
+  if (tv.kind === 'netcast') { run(tv.id, 'key', { key: 'INPUT' }); return toast('Escolha a entrada na TV com o direcional'); }
   const list = h('div', { class: 'list' }, h('p', { class: 'empty' }, 'Perguntando à TV…'));
   showSheet('Entradas da TV', list);
   try {
@@ -302,7 +348,14 @@ function openNumbers(dev) {
 function openKeyboard(dev) {
   const input = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'send', placeholder: 'Digite aqui; vai direto para a TV' });
   let last = '';
+  const live = !(dev.kind === 'fire' && (devices.find((x) => x.id === dev.id) ?? dev).mode === 'pin');
+  const submit = () => {
+    if (live) run(dev.id, 'enter');
+    else if (input.value) run(dev.id, 'text', { text: input.value });
+    input.value = ''; last = '';
+  };
   input.addEventListener('input', () => {
+    if (!live) return;
     const v = input.value;
     let common = 0;
     while (common < v.length && common < last.length && v[common] === last[common]) common++;
@@ -313,15 +366,15 @@ function openKeyboard(dev) {
     last = v;
   });
   input.addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') { e.preventDefault(); run(dev.id, 'enter'); input.value = ''; last = ''; }
+    if (e.key === 'Enter') { e.preventDefault(); submit(); }
   });
   showSheet('Teclado', h('div', { class: 'kbd' },
     input,
     h('div', { class: 'kbd__row' },
       h('button', { class: 'btn', onclick: () => { run(dev.id, 'backspace', { count: 1 }); input.value = input.value.slice(0, -1); last = input.value; } }, 'Apagar'),
       h('button', { class: 'btn', onclick: () => { input.value = ''; last = ''; input.focus(); } }, 'Limpar campo'),
-      h('button', { class: 'btn btn--primary', onclick: () => { run(dev.id, 'enter'); input.value = ''; last = ''; } }, 'Enter')),
-    h('p', { class: 'hint' }, 'Abra antes o campo de busca ou de senha na TV. Cada letra vai na hora.')));
+      h('button', { class: 'btn btn--primary', onclick: submit }, live ? 'Enter' : 'Enviar')),
+    h('p', { class: 'hint' }, live ? 'Abra antes o campo de busca ou de senha na TV. Cada letra vai na hora.' : 'Abra antes o campo de busca na TV, escreva aqui e toque em Enviar.')));
   setTimeout(() => input.focus(), 50);
 }
 
@@ -364,6 +417,17 @@ function openTouchpad(dev) {
 // ---------- aparelhos e ajustes ----------
 $('#open-settings').addEventListener('click', () => openSettings(false));
 
+const fsBtn = $('#fullscreen');
+const fsIcon = () => { fsBtn.innerHTML = `<svg viewBox="0 0 24 24"><use href="#i-${document.fullscreenElement ? 'exitfull' : 'full'}"/></svg>`; };
+if (!document.documentElement.requestFullscreen) fsBtn.hidden = true;
+fsBtn.addEventListener('click', async () => {
+  try {
+    if (document.fullscreenElement) await document.exitFullscreen();
+    else await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
+  } catch { toast('O navegador não deixou abrir em tela cheia'); }
+});
+document.addEventListener('fullscreenchange', fsIcon);
+
 function openSettings(autoSearch) {
   const list = h('div', { class: 'list' });
   const result = h('div', {});
@@ -396,7 +460,7 @@ function openSettings(autoSearch) {
 function deviceCard(d) {
   return h('div', { class: 'dev' },
     h('div', { class: 'dev__top' }, h('span', { class: `dot dot--${d.state}` }), h('span', { class: 'dev__name' }, d.name)),
-    h('div', { class: 'dev__meta' }, `${d.kind === 'lg' ? 'TV LG' : 'Fire Stick'} · ${d.ip}${d.model ? ` · ${d.model}` : ''} · ${STATE_TEXT[d.state] ?? d.state}`),
+    h('div', { class: 'dev__meta' }, `${KIND_LABEL[d.kind] ?? d.kind} · ${d.ip}${d.model ? ` · ${d.model}` : ''} · ${STATE_TEXT[d.state] ?? d.state}`),
     h('div', { class: 'dev__actions' },
       h('button', { class: 'btn btn--sm', onclick: () => call({ op: 'reconnect', device: d.id }).catch(() => {}) }, 'Reconectar'),
       h('button', { class: 'btn btn--sm', onclick: () => {
@@ -409,7 +473,8 @@ function deviceCard(d) {
 }
 
 function addForm() {
-  const kind = h('select', { 'aria-label': 'Tipo' }, h('option', { value: 'lg' }, 'TV LG'), h('option', { value: 'fire' }, 'Fire Stick'));
+  const kind = h('select', { 'aria-label': 'Tipo' },
+    h('option', { value: 'lg' }, 'TV LG (webOS)'), h('option', { value: 'netcast' }, 'TV LG 2012–2013'), h('option', { value: 'fire' }, 'Fire Stick'));
   const ip = h('input', { inputmode: 'decimal', placeholder: '192.168.15.20', 'aria-label': 'IP' });
   return h('div', { class: 'add' }, kind, ip, h('button', { class: 'btn btn--sm', style: { height: '44px' }, onclick: () => {
     call({ op: 'add', kind: kind.value, ip: ip.value }).then(() => { toast('Adicionado'); ip.value = ''; }).catch(() => {});

@@ -5,6 +5,7 @@ import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
+import { Lightning } from './fire-lightning.mjs';
 
 const LOCAL_ADB = join(homedir(), '.local/share/controle/platform-tools/adb');
 export const ADB = process.env.ADB ?? (existsSync(LOCAL_ADB) ? LOCAL_ADB : 'adb');
@@ -51,10 +52,13 @@ function adb(args, timeoutMs = 8000) {
 
 export class FireTv extends EventEmitter {
   /** @param {import('./config.mjs').Device} device */
-  constructor(device) {
+  constructor(device, onToken) {
     super();
     this.device = device;
-    this.state = 'desconectada'; // desconectada | conectando | aguardando-permissao | sem-adb | conectada
+    this.onToken = onToken; // salva o token do PIN
+    this.mode = null;       // 'adb' | 'pin'
+    this.lightning = new Lightning(device.ip, device.fireToken);
+    this.state = 'desconectada'; // desconectada | conectando | aguardando-permissao | precisa-pin | conectada
     this.detail = '';
     this.shell = null;
     this.buffer = '';
@@ -68,7 +72,7 @@ export class FireTv extends EventEmitter {
   }
 
   get serial() { return `${this.device.ip}:5555`; }
-  get status() { return { state: this.state, detail: this.detail }; }
+  get status() { return { state: this.state, detail: this.detail, mode: this.mode }; }
 
   setState(s, detail = '') {
     if (this.state !== s || this.detail !== detail) { this.state = s; this.detail = detail; this.emit('status'); }
@@ -90,27 +94,91 @@ export class FireTv extends EventEmitter {
   async connect() {
     if (this.state === 'conectando' || this.state === 'conectada') return;
     this.setState('conectando');
+    // 1) ADB, se a depuração estiver ligada (mais teclas).
     try {
-      const out = await adb(['connect', this.serial], 10000);
-      if (/refused|failed|unable|cannot/i.test(out)) {
-        this.setState('sem-adb', 'O Fire recusou. A depuração ADB está ligada?');
-        return this.scheduleReconnect(10000);
+      const out = await adb(['connect', this.serial], 6000);
+      if (!/refused|failed|unable|cannot/i.test(out)) {
+        const state = (await adb(['-s', this.serial, 'get-state']).catch((e) => e.message)).trim();
+        if (state === 'device') {
+          this.mode = 'adb';
+          this.openShell();
+          return this.setState('conectada');
+        }
+        if (/unauthorized/i.test(state)) {
+          this.setState('aguardando-permissao', 'Aceite o aviso na TV ("Sempre permitir").');
+          return this.scheduleReconnect(3000);
+        }
       }
-      const state = (await adb(['-s', this.serial, 'get-state']).catch((e) => e.message)).trim();
-      if (/unauthorized/i.test(state)) {
-        this.setState('aguardando-permissao', 'Aceite o aviso na TV ("Sempre permitir").');
-        return this.scheduleReconnect(3000);
+    } catch {}
+    // 2) Canal do app oficial, pareado por PIN.
+    if (this.lightning.token) {
+      const ok = (await this.lightning.reachable()) || (await this.lightning.wake());
+      if (ok) {
+        this.mode = 'pin';
+        return this.setState('conectada');
       }
-      if (state !== 'device') {
-        this.setState('desconectada', state);
-        return this.scheduleReconnect();
-      }
-      this.openShell();
-      this.setState('conectada');
-    } catch (e) {
-      this.setState('desconectada', e.message);
-      this.scheduleReconnect();
+      this.mode = null;
+      this.setState('desconectada', 'O Fire não respondeu. Está ligado?');
+      return this.scheduleReconnect(15000);
     }
+    this.mode = null;
+    this.setState('precisa-pin');
+  }
+
+  /** Mostra um PIN na TV. */
+  async pairStart() {
+    this.lightning.ip = this.device.ip;
+    await this.lightning.showPin('Controle');
+  }
+
+  async pairVerify(pin) {
+    const token = await this.lightning.verifyPin(pin);
+    this.device.fireToken = token;
+    this.onToken?.(token);
+    this.mode = 'pin';
+    this.setState('conectada');
+  }
+
+  async runPin(action, args) {
+    const l = this.lightning;
+    const guard = (p) => p.catch((e) => {
+      if (e.code === 'TOKEN') { this.device.fireToken = undefined; l.token = undefined; this.onToken?.(undefined); this.mode = null; this.setState('precisa-pin'); }
+      throw e;
+    });
+    switch (action) {
+      case 'key': return guard(this.queued(() => l.key(args.long && args.key === 'home' ? 'menu' : args.key)));
+      case 'text': return guard(l.text(String(args.text ?? '').slice(0, 200)));
+      case 'enter': return guard(this.queued(() => l.key('select')));
+      case 'backspace': throw new Error('Para apagar, use o teclado da TV ou ligue a depuração ADB');
+      case 'apps': {
+        const list = await guard(l.apps());
+        const known = new Map(FIRE_APPS.map((a) => [a.id, a]));
+        // Os conhecidos (com cor) primeiro; depois o resto em ordem alfabética.
+        return list
+          .map((a) => ({
+            id: a.appId, title: known.get(a.appId)?.title ?? a.name ?? a.appId, color: known.get(a.appId)?.color,
+            // Arte oficial do app, servida pela própria Amazon.
+            icon: /^https:\/\/[\w.-]+\.media-amazon\.com\//.test(a.tvIconArt ?? '') ? a.tvIconArt : undefined,
+            rank: known.has(a.appId) ? FIRE_APPS.findIndex((k) => k.id === a.appId) : 999 }))
+          .sort((a, b) => a.rank - b.rank || a.title.localeCompare(b.title, 'pt-BR'))
+          .map(({ rank, ...a }) => a);
+      }
+      case 'launch': {
+        const pkg = String(args.id);
+        if (!/^[\w.]+$/.test(pkg)) throw new Error('Pacote inválido');
+        return guard(l.launch(pkg));
+      }
+      default: throw new Error(`Comando desconhecido: ${action}`);
+    }
+  }
+
+  /** Uma tecla de cada vez; se o dedo segurar, não deixa empilhar atraso. */
+  queued(fn) {
+    if ((this.pinQueue ?? 0) >= 2) return Promise.resolve();
+    this.pinQueue = (this.pinQueue ?? 0) + 1;
+    const run = (this.pinChain ?? Promise.resolve()).then(fn).finally(() => { this.pinQueue--; });
+    this.pinChain = run.catch(() => {});
+    return run;
   }
 
   openShell() {
@@ -191,6 +259,10 @@ export class FireTv extends EventEmitter {
   }
 
   async run(action, args = {}) {
+    if (action === 'pairStart') return this.pairStart();
+    if (action === 'pairVerify') return this.pairVerify(String(args.pin ?? '').trim());
+    if (this.state !== 'conectada') throw new Error('Fire desconectado');
+    if (this.mode === 'pin') return this.runPin(action, args);
     switch (action) {
       case 'key': {
         const code = FIRE_KEYS[args.key];

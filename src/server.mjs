@@ -9,10 +9,13 @@ import { loadConfig, saveConfig, CONFIG_FILE } from './config.mjs';
 import { discover, macOf } from './discover.mjs';
 import { LgTv } from './lg.mjs';
 import { FireTv, ADB } from './fire.mjs';
+import { NetcastTv } from './netcast.mjs';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
-const SUPPORTED = new Set(['lg', 'fire']);
+const SUPPORTED = new Set(['lg', 'netcast', 'fire']);
+const KIND_NAME = { lg: 'TV LG', netcast: 'TV LG', fire: 'Fire Stick' };
+const isTv = (kind) => kind === 'lg' || kind === 'netcast';
 
 const config = loadConfig();
 /** @type {Map<string, LgTv | FireTv>} */
@@ -21,12 +24,12 @@ const drivers = new Map();
 function persist() { saveConfig(config); }
 
 function makeDriver(device) {
-  const d = device.kind === 'lg'
-    ? new LgTv(device, () => persist())
-    : new FireTv(device);
+  const d = device.kind === 'lg' ? new LgTv(device, () => persist())
+    : device.kind === 'netcast' ? new NetcastTv(device, () => persist())
+    : new FireTv(device, () => persist());
   d.on('status', async () => {
     broadcastDevices();
-    if (device.kind === 'lg' && d.state === 'conectada' && !device.mac) {
+    if (isTv(device.kind) && d.state === 'conectada' && !device.mac) {
       const mac = await macOf(device.ip);
       if (mac) { device.mac = mac; persist(); }
     }
@@ -65,7 +68,7 @@ async function runDiscovery() {
       const device = {
         id: `${f.kind}-${(f.udn || f.ip).replace(/[^a-z0-9]/gi, '').slice(-8)}`,
         kind: f.kind,
-        name: f.kind === 'lg' ? 'TV LG' : 'Fire Stick',
+        name: KIND_NAME[f.kind],
         ip: f.ip,
         udn: f.udn || undefined,
         model: f.model || undefined,
@@ -116,7 +119,7 @@ function broadcastDevices() {
 /** Volume no controle do Fire vai para a TV LG quando ela estiver ligada (é a TV que tem o som). */
 function volumeTarget(device, args) {
   if (device.kind !== 'fire' || !['volumeUp', 'volumeDown', 'mute'].includes(args?.key)) return null;
-  const tv = config.devices.find((d) => d.kind === 'lg' && drivers.get(d.id)?.state === 'conectada');
+  const tv = config.devices.find((d) => isTv(d.kind) && drivers.get(d.id)?.state === 'conectada');
   return tv ? drivers.get(tv.id) : null;
 }
 
@@ -132,7 +135,7 @@ async function handle(msg) {
       if (!SUPPORTED.has(kind)) throw new Error('Por enquanto: TV LG ou Fire Stick.');
       if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error('IP inválido');
       if (config.devices.some((d) => d.ip === ip && d.kind === kind)) throw new Error('Esse aparelho já está na lista');
-      const device = { id: `${kind}-${ip.replace(/\./g, '')}`, kind, name: kind === 'lg' ? 'TV LG' : 'Fire Stick', ip };
+      const device = { id: `${kind}-${ip.replace(/\./g, '')}`, kind, name: KIND_NAME[kind], ip };
       config.devices.push(device);
       persist();
       makeDriver(device);
