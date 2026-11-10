@@ -2,7 +2,7 @@
   "name": "controle",
   "version": "0.1.0",
   "private": true,
-  "description": "Controle remoto pelo Wi-Fi: uma ponte no PC fala com a TV e o Fire Stick, e o celular abre a página.",
+  "description": "Controle remoto pelo Wi-Fi: uma ponte no PC fala com TVs LG e Samsung, Fire Stick e Android, e o celular abre a página.",
   "type": "module",
   "engines": {
     "node": ">=20"
