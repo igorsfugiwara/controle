@@ -71,9 +71,9 @@ function toast(text) {
 const buzz = (ms = 12) => { try { navigator.vibrate?.(ms); } catch {} };
 
 const selected = () => devices.find((d) => d.id === selectedId) ?? devices[0];
-const isTv = (d) => d && (d.kind === 'lg' || d.kind === 'netcast');
+const isTv = (d) => d && (d.kind === 'lg' || d.kind === 'netcast' || d.kind === 'samsung');
 const lgDevice = () => devices.find(isTv);
-const KIND_LABEL = { lg: 'TV LG', netcast: 'TV LG (2012–2013)', fire: 'Fire Stick', android: 'Projetor Android' };
+const KIND_LABEL = { lg: 'TV LG', netcast: 'TV LG (2012–2013)', samsung: 'TV Samsung', fire: 'Fire Stick', android: 'Projetor Android' };
 const usesFireApps = (d) => d.kind === 'fire' || d.kind === 'android';
 
 const STATE_TEXT = {
@@ -81,6 +81,7 @@ const STATE_TEXT = {
   conectando: 'Conectando…',
   'aguardando-permissao': 'Aceite o aviso na TV',
   'precisa-pin': 'Falta parear com PIN',
+  recusada: 'A TV recusou',
   desconectada: 'Desconectado',
 };
 
@@ -108,7 +109,7 @@ function renderMain() {
     renderedKey = '';
     stage.replaceChildren(h('div', { class: 'notice' },
       h('b', {}, 'Nenhum aparelho ainda. '),
-      'Ligue a TV e o Fire Stick e toque em procurar.',
+      'Ligue a TV e os aparelhos e toque em procurar.',
       h('div', { class: 'notice__actions' },
         h('button', { class: 'btn btn--primary btn--sm', onclick: () => openSettings(true) }, 'Procurar aparelhos'))));
     return;
@@ -131,7 +132,9 @@ function updateStatus(cur) {
   const remote = $('.remote');
   if (!slot || !remote) return;
   slot.replaceChildren(...(noticeFor(cur) ?? []));
-  remote.classList.toggle('remote--offline', cur.state !== 'conectada' && !(cur.kind === 'lg' && cur.state === 'desconectada'));
+  // TV desligada que liga pela rede: o controle fica ativo para o botão de ligar.
+  const wakes = (cur.kind === 'lg' || cur.kind === 'samsung') && cur.state === 'desconectada';
+  remote.classList.toggle('remote--offline', cur.state !== 'conectada' && !wakes);
 
   const vol = $('[data-vol]', remote);
   if (vol) vol.textContent = cur.volume ? (cur.volume.muted ? 'mudo' : cur.volume.level) : '';
@@ -144,6 +147,7 @@ function updateStatus(cur) {
   // Pelo canal do PIN o Fire não tem essas teclas; a TV antiga não recebe texto.
   for (const el of remote.querySelectorAll('[data-adb]')) el.hidden = cur.kind === 'fire' && cur.mode === 'pin';
   for (const el of remote.querySelectorAll('[data-webos]')) el.hidden = cur.kind === 'netcast';
+  for (const el of remote.querySelectorAll('[data-action="screenOff"]')) el.hidden = cur.kind === 'samsung';
 
   if (usesFireApps(cur) && cur.state === 'conectada' && appsLoadedFor !== cur.id) loadFireApps(cur);
 }
@@ -155,6 +159,19 @@ function noticeFor(d) {
     if (d.state === 'precisa-pin') return [pairBox(d)];
     return [h('div', { class: 'notice' },
       h('b', {}, 'TV desligada ou fora da rede. '), 'Este modelo não liga pela rede: ligue no botão da TV ou pelo Fire.',
+      h('div', { class: 'notice__actions' }, retry))];
+  }
+  if (d.kind === 'samsung') {
+    if (d.state === 'aguardando-permissao') {
+      return [h('div', { class: 'notice' }, h('b', {}, 'Olhe a TV: '), 'ela pergunta se permite o “Controle”. Escolha ', h('b', {}, 'Permitir'), '. É só na primeira vez.')];
+    }
+    if (d.state === 'recusada') {
+      return [h('div', { class: 'notice notice--bad' }, h('b', {}, 'A TV recusou o Controle. '),
+        'Na TV: Configurações → Geral → Gerenciador de dispositivos externos → Gerenciador de conexão de dispositivos → Lista de dispositivos. Apague o “Controle” de lá e toque em tentar de novo.',
+        h('div', { class: 'notice__actions' }, retry))];
+    }
+    return [h('div', { class: 'notice' },
+      h('b', {}, 'TV desligada ou fora da rede. '), d.detail ? `${d.detail} ` : null, 'O botão vermelho tenta ligar pela rede.',
       h('div', { class: 'notice__actions' }, retry))];
   }
   if (d.kind === 'lg') {
@@ -329,6 +346,7 @@ async function openInputs(dev) {
     tv.kind === 'android'
       ? h('button', { class: 'list__item', onclick: () => { buzz(); run(tv.id, 'key', { key: 'home' }); closeSheet(); } },
         h('span', {}, 'Android (tela inicial)'), h('small', {}, ''))
+      : tv.kind === 'samsung' ? null
       : h('button', { class: 'list__item', onclick: () => { buzz(); run(tv.id, 'launch', { id: 'com.webos.app.livetv' }); closeSheet(); } },
         h('span', {}, 'TV ao vivo (antena)'), h('small', {}, '')));
     if (!inputs.length) list.prepend(h('p', { class: 'empty' }, 'A TV não listou entradas.'));
@@ -359,7 +377,8 @@ function openNumbers(dev) {
 function openKeyboard(dev) {
   const input = h('input', { type: 'text', autocomplete: 'off', autocapitalize: 'off', spellcheck: 'false', enterkeyhint: 'send', placeholder: 'Digite aqui; vai direto para a TV' });
   let last = '';
-  const live = !(dev.kind === 'fire' && (devices.find((x) => x.id === dev.id) ?? dev).mode === 'pin');
+  // Fire pelo PIN e Samsung recebem o texto inteiro de uma vez; os outros, letra por letra.
+  const live = dev.kind !== 'samsung' && !(dev.kind === 'fire' && (devices.find((x) => x.id === dev.id) ?? dev).mode === 'pin');
   const submit = () => {
     if (live) run(dev.id, 'enter');
     else if (input.value) run(dev.id, 'text', { text: input.value });
@@ -478,6 +497,11 @@ function deviceCard(d) {
         const name = prompt('Nome do aparelho', d.name);
         if (name) call({ op: 'rename', device: d.id, name }).catch(() => {});
       } }, 'Renomear'),
+      d.kind === 'samsung' ? h('button', { class: 'btn btn--sm', onclick: () => {
+        const next = d.backMode === 'press' ? 'click' : 'press';
+        call({ op: 'option', device: d.id, key: 'backMode', value: next })
+          .then(() => toast(next === 'press' ? 'Voltar: modo 2 (apertar e soltar)' : 'Voltar: modo 1 (padrão)')).catch(() => {});
+      } }, `Voltar: modo ${d.backMode === 'press' ? 2 : 1}`) : null,
       h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
         if (confirm(`Tirar “${d.name}” da lista? Dá para achar de novo depois.`)) call({ op: 'remove', device: d.id }).catch(() => {});
       } }, 'Tirar')));
@@ -485,7 +509,7 @@ function deviceCard(d) {
 
 function addForm() {
   const kind = h('select', { 'aria-label': 'Tipo' },
-    h('option', { value: 'lg' }, 'TV LG (webOS)'), h('option', { value: 'netcast' }, 'TV LG 2012–2013'), h('option', { value: 'fire' }, 'Fire Stick'), h('option', { value: 'android' }, 'Android (projetor/TV box)'));
+    h('option', { value: 'lg' }, 'TV LG (webOS)'), h('option', { value: 'netcast' }, 'TV LG 2012–2013'), h('option', { value: 'samsung' }, 'TV Samsung (2016+)'), h('option', { value: 'fire' }, 'Fire Stick'), h('option', { value: 'android' }, 'Android (projetor/TV box)'));
   const ip = h('input', { inputmode: 'decimal', placeholder: '192.168.15.20', 'aria-label': 'IP' });
   return h('div', { class: 'add' }, kind, ip, h('button', { class: 'btn btn--sm', style: { height: '44px' }, onclick: () => {
     call({ op: 'add', kind: kind.value, ip: ip.value }).then(() => { toast('Adicionado'); ip.value = ''; }).catch(() => {});
@@ -499,6 +523,11 @@ function help() {
         h('li', {}, 'Na TV: Configurações → Geral → Dispositivos (ou Conexão) → ative “Ligar via Wi-Fi” / “LG Connect Apps”.'),
         h('li', {}, 'Se tiver “Quick Start+”, ative também.'),
         h('li', {}, 'Ligue a TV uma vez com ela conectada aqui, para o computador aprender o endereço dela.'))),
+    h('details', { class: 'help' }, h('summary', {}, 'TV Samsung'),
+      h('ol', {},
+        h('li', {}, 'Na primeira vez a TV pergunta se permite o “Controle”: escolha Permitir.'),
+        h('li', {}, 'Para ligar pelo celular: Configurações → Geral → Rede → Configurações avançadas (ou Especialista) → ative “Ligar com dispositivo móvel”.'),
+        h('li', {}, 'Se o voltar não funcionar dentro dos apps, toque em “Voltar: modo 1” no cartão da TV para trocar para o modo 2.'))),
     h('details', { class: 'help' }, h('summary', {}, 'Ativar o Fire Stick (depuração ADB)'),
       h('ol', {},
         h('li', {}, 'Configurações → Minha Fire TV → Sobre.'),

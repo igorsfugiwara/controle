@@ -10,12 +10,13 @@ import { discover, macOf } from './discover.mjs';
 import { LgTv } from './lg.mjs';
 import { FireTv, ADB } from './fire.mjs';
 import { NetcastTv } from './netcast.mjs';
+import { SamsungTv } from './samsung.mjs';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
-const SUPPORTED = new Set(['lg', 'netcast', 'fire', 'android']);
-const KIND_NAME = { lg: 'TV LG', netcast: 'TV LG', fire: 'Fire Stick', android: 'Projetor' };
-const isTv = (kind) => kind === 'lg' || kind === 'netcast';
+const SUPPORTED = new Set(['lg', 'netcast', 'samsung', 'fire', 'android']);
+const KIND_NAME = { lg: 'TV LG', netcast: 'TV LG', samsung: 'TV Samsung', fire: 'Fire Stick', android: 'Projetor' };
+const isTv = (kind) => kind === 'lg' || kind === 'netcast' || kind === 'samsung';
 
 const config = loadConfig();
 /** @type {Map<string, LgTv | FireTv>} */
@@ -26,6 +27,7 @@ function persist() { saveConfig(config); }
 function makeDriver(device) {
   const d = device.kind === 'lg' ? new LgTv(device, () => persist())
     : device.kind === 'netcast' ? new NetcastTv(device, () => persist())
+    : device.kind === 'samsung' ? new SamsungTv(device, () => persist())
     : new FireTv(device, () => persist());
   d.on('status', async () => {
     broadcastDevices();
@@ -41,7 +43,7 @@ function makeDriver(device) {
 
 function deviceView(device) {
   const d = drivers.get(device.id);
-  return { id: device.id, kind: device.kind, name: device.name, ip: device.ip, model: device.model, ...(d?.status ?? {}) };
+  return { id: device.id, kind: device.kind, name: device.name, ip: device.ip, model: device.model, backMode: device.backMode, ...(d?.status ?? {}) };
 }
 
 // ---- descoberta: acha aparelhos novos e segue os que mudaram de IP ----
@@ -65,6 +67,8 @@ async function runDiscovery() {
         if (!known.udn && f.udn) { known.udn = f.udn; changed = true; }
         continue;
       }
+      // Só entra Samsung que responda ao controle remoto (soundbar e afins também falam SSDP).
+      if (f.kind === 'samsung' && !(await answers(`http://${f.ip}:8001/api/v2/`))) continue;
       const device = {
         id: `${f.kind}-${(f.udn || f.ip).replace(/[^a-z0-9]/gi, '').slice(-8)}`,
         kind: f.kind,
@@ -81,6 +85,10 @@ async function runDiscovery() {
     return found;
   })().finally(() => { discovering = null; });
   return discovering;
+}
+
+async function answers(url) {
+  try { return (await fetch(url, { signal: AbortSignal.timeout(2000) })).ok; } catch { return false; }
 }
 
 // ---- HTTP ----
@@ -146,7 +154,7 @@ async function handle(msg) {
     case 'add': {
       const kind = String(msg.kind);
       const ip = String(msg.ip ?? '').trim();
-      if (!SUPPORTED.has(kind)) throw new Error('Por enquanto: TV LG, Fire Stick ou Android com ADB.');
+      if (!SUPPORTED.has(kind)) throw new Error('Por enquanto: TV LG, TV Samsung, Fire Stick ou Android com ADB.');
       if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error('IP inválido');
       if (config.devices.some((d) => d.ip === ip && d.kind === kind)) throw new Error('Esse aparelho já está na lista');
       const device = { id: `${kind}-${ip.replace(/\./g, '')}`, kind, name: KIND_NAME[kind], ip };
@@ -160,6 +168,16 @@ async function handle(msg) {
       const device = config.devices.find((d) => d.id === msg.device);
       if (!device) throw new Error('Aparelho não encontrado');
       device.name = String(msg.name ?? '').trim().slice(0, 30) || device.name;
+      persist();
+      broadcastDevices();
+      return;
+    }
+    case 'option': {
+      // Ajustes por aparelho. Hoje: como a Samsung recebe o "voltar".
+      const device = config.devices.find((d) => d.id === msg.device);
+      if (!device) throw new Error('Aparelho não encontrado');
+      if (msg.key !== 'backMode' || !['click', 'press'].includes(msg.value)) throw new Error('Ajuste inválido');
+      device.backMode = msg.value;
       persist();
       broadcastDevices();
       return;

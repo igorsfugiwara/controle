@@ -45,7 +45,7 @@ svg { width: 24px; height: 24px; display: block; }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #66666e; flex: none; }
 .dot--conectada { background: var(--ok); }
 .dot--conectando, .dot--aguardando-permissao { background: var(--warn); }
-.dot--sem-adb, .dot--desconectada { background: var(--red); }
+.dot--sem-adb, .dot--desconectada, .dot--recusada { background: var(--red); }
 .icon-btn { width: 40px; height: 40px; border-radius: 50%; display: grid; place-items: center; color: var(--muted); flex: none; }
 .icon-btn:active { background: var(--body); }
 
