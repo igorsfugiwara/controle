@@ -1,5 +1,6 @@
 // Fire Stick / Fire TV: ADB pela rede (porta 5555). Na primeira vez o Fire pergunta
 // "Permitir depuração?" — marque "Sempre permitir deste computador".
+// Também serve para projetores e TV boxes Android com ADB aberto (kind 'android'), sem o canal do PIN.
 import { EventEmitter } from 'node:events';
 import { spawn, execFile } from 'node:child_process';
 import { existsSync } from 'node:fs';
@@ -26,6 +27,7 @@ export const FIRE_APPS = [
   { id: 'com.netflix.ninja', title: 'Netflix', color: '#e50914' },
   { id: 'com.amazon.firebat', title: 'Prime Video', color: '#1a98ff' },
   { id: 'com.amazon.avod', title: 'Prime Video', color: '#1a98ff' },
+  { id: 'com.amazon.avod.thirdpartyclient', title: 'Prime Video', color: '#1a98ff' },
   { id: 'com.amazon.firetv.youtube', title: 'YouTube', color: '#ff0000' },
   { id: 'com.google.android.youtube.tv', title: 'YouTube', color: '#ff0000' },
   { id: 'com.disney.disneyplus', title: 'Disney+', color: '#113ccf' },
@@ -39,7 +41,15 @@ export const FIRE_APPS = [
   { id: 'com.apple.atve.amazon.appletv', title: 'Apple TV', color: '#555' },
   { id: 'org.xbmc.kodi', title: 'Kodi', color: '#17b2e7' },
   { id: 'com.stremio.one', title: 'Stremio', color: '#7b5bf5' },
+  { id: 'com.android.chrome', title: 'Chrome', color: '#1a73e8' },
+  { id: 'com.mxtech.videoplayer.ad', title: 'MX Player', color: '#1c75bc' },
+  { id: 'com.waxrain.airplayer2', title: 'AirPlay', color: '#444' },
+  { id: 'com.droidlogic.miracast', title: 'Espelhar tela', color: '#444' },
+  { id: 'com.droidlogic.mediacenter', title: 'Mídia', color: '#444' },
 ];
+
+/** Entradas físicas dos aparelhos Android (TV Input Framework). */
+const INPUT_LABEL = { 9: 'HDMI', 3: 'AV', 1: 'Componente', 7: 'VGA' };
 
 function adb(args, timeoutMs = 8000) {
   return new Promise((resolve, reject) => {
@@ -69,6 +79,8 @@ export class FireTv extends EventEmitter {
     this.retry = null;
     this.stopped = false;
     this.installed = null;
+    this.isAndroid = device.kind === 'android';
+    this.label = this.isAndroid ? 'O projetor' : 'O Fire';
   }
 
   get serial() { return `${this.device.ip}:5555`; }
@@ -110,6 +122,11 @@ export class FireTv extends EventEmitter {
         }
       }
     } catch {}
+    if (this.isAndroid) {
+      this.mode = null;
+      this.setState('desconectada', 'Não achei o ADB. Está ligado, com a depuração por rede ativa?');
+      return this.scheduleReconnect(15000);
+    }
     // 2) Canal do app oficial, pareado por PIN.
     if (this.lightning.token) {
       const ok = (await this.lightning.reachable()) || (await this.lightning.wake());
@@ -199,7 +216,7 @@ export class FireTv extends EventEmitter {
     sh.on('exit', () => {
       if (this.shell !== sh) return;
       this.shell = null;
-      for (const w of this.waiters) w.reject(new Error('O Fire desconectou'));
+      for (const w of this.waiters) w.reject(new Error(`${this.label} desconectou`));
       this.waiters = [];
       this.busy = false;
       this.queue = [];
@@ -209,13 +226,13 @@ export class FireTv extends EventEmitter {
   }
 
   exec(cmd, timeoutMs = 8000) {
-    if (!this.shell) return Promise.reject(new Error('Fire desconectado'));
+    if (!this.shell) return Promise.reject(new Error(`${this.label} está desconectado`));
     const id = ++this.seq;
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         const i = this.waiters.findIndex((x) => x.id === id);
         if (i >= 0) this.waiters.splice(i, 1);
-        reject(new Error('O Fire não respondeu'));
+        reject(new Error(`${this.label} não respondeu`));
       }, timeoutMs);
       this.waiters.push({
         id,
@@ -228,7 +245,7 @@ export class FireTv extends EventEmitter {
 
   /** Teclas vão numa fila; se o celular mandar várias seguidas, saem juntas num só comando. */
   pressKey(code, { long = false } = {}) {
-    if (this.state !== 'conectada') return Promise.reject(new Error('Fire desconectado'));
+    if (this.state !== 'conectada') return Promise.reject(new Error(`${this.label} está desconectado`));
     if (long) return this.exec(`input keyevent --longpress ${code}`);
     if (this.queue.length >= 8) return Promise.resolve(); // não acumula atraso
     this.queue.push(code);
@@ -258,10 +275,31 @@ export class FireTv extends EventEmitter {
     });
   }
 
+  /** HDMI/AV do projetor, lidos do TV Input Framework. */
+  async inputs() {
+    const out = await this.exec('dumpsys tv_input');
+    const list = [];
+    for (const m of out.matchAll(/TvInputHardwareInfo \{id=\d+, type=(\d+)(?:[^}]*?hdmi_port=(\d+))?[^}]*?cable_connection_status=(\d+)\}, mInfo: TvInputInfo\{id=([^,]+),/g)) {
+      const [, type, port, cable, id] = m;
+      const name = INPUT_LABEL[type];
+      if (!name || list.some((i) => i.id === id)) continue;
+      list.push({ id, label: port ? `${name} ${port}` : name, connected: cable === '1' ? true : cable === '2' ? false : null });
+    }
+    return list.sort((a, b) => a.label.localeCompare(b.label, 'pt-BR', { numeric: true }));
+  }
+
+  async setInput(id) {
+    if (!/^[\w./]+$/.test(id)) throw new Error('Entrada inválida');
+    const uri = `content://android.media.tv/passthrough/${encodeURIComponent(id)}`;
+    const out = await this.exec(`am start -a android.intent.action.VIEW -t vnd.android.cursor.item/channel -d '${uri}' 2>&1`);
+    // Sem app de TV que aceite o atalho: abre o seletor de entradas do próprio aparelho.
+    if (/Error|unable|No Activity/i.test(out)) await this.exec('input keyevent 178');
+  }
+
   async run(action, args = {}) {
     if (action === 'pairStart') return this.pairStart();
     if (action === 'pairVerify') return this.pairVerify(String(args.pin ?? '').trim());
-    if (this.state !== 'conectada') throw new Error('Fire desconectado');
+    if (this.state !== 'conectada') throw new Error(`${this.label} está desconectado`);
     if (this.mode === 'pin') return this.runPin(action, args);
     switch (action) {
       case 'key': {
@@ -281,10 +319,13 @@ export class FireTv extends EventEmitter {
       }
       case 'enter': return this.pressKey(66);
       case 'apps': return this.apps();
+      case 'inputs': return this.inputs();
+      case 'setInput': return this.setInput(String(args.id ?? ''));
       case 'launch': {
         const pkg = String(args.id);
         if (!/^[\w.]+$/.test(pkg)) throw new Error('Pacote inválido');
-        return this.exec(`monkey -p ${pkg} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1`);
+        // TV boxes costumam ter só a entrada "leanback"; celulares e o Chrome, só a comum.
+        return this.exec(`monkey -p ${pkg} -c android.intent.category.LEANBACK_LAUNCHER 1 2>&1 | grep -q 'No activities' && monkey -p ${pkg} -c android.intent.category.LAUNCHER 1 >/dev/null 2>&1`);
       }
       default: throw new Error(`Comando desconhecido: ${action}`);
     }

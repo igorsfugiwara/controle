@@ -13,8 +13,8 @@ import { NetcastTv } from './netcast.mjs';
 
 const PORT = Number(process.env.PORT ?? 8787);
 const PUBLIC = fileURLToPath(new URL('../public/', import.meta.url));
-const SUPPORTED = new Set(['lg', 'netcast', 'fire']);
-const KIND_NAME = { lg: 'TV LG', netcast: 'TV LG', fire: 'Fire Stick' };
+const SUPPORTED = new Set(['lg', 'netcast', 'fire', 'android']);
+const KIND_NAME = { lg: 'TV LG', netcast: 'TV LG', fire: 'Fire Stick', android: 'Projetor' };
 const isTv = (kind) => kind === 'lg' || kind === 'netcast';
 
 const config = loadConfig();
@@ -123,6 +123,20 @@ function volumeTarget(device, args) {
   return tv ? drivers.get(tv.id) : null;
 }
 
+// O projetor Android não tem arte dos apps; pega emprestada a arte oficial que o Fire entrega.
+const iconByTitle = new Map();
+async function withIcons(apps) {
+  if (!iconByTitle.size) {
+    const fire = config.devices.find((d) => d.kind === 'fire' && drivers.get(d.id)?.state === 'conectada');
+    if (fire) await drivers.get(fire.id).run('apps').then(rememberIcons).catch(() => {});
+  }
+  return apps.map((a) => ({ ...a, icon: a.icon ?? iconByTitle.get(a.title) }));
+}
+function rememberIcons(apps) {
+  for (const a of apps ?? []) if (a.icon) iconByTitle.set(a.title, a.icon);
+  return apps;
+}
+
 async function handle(msg) {
   switch (msg.op) {
     case 'discover': {
@@ -132,7 +146,7 @@ async function handle(msg) {
     case 'add': {
       const kind = String(msg.kind);
       const ip = String(msg.ip ?? '').trim();
-      if (!SUPPORTED.has(kind)) throw new Error('Por enquanto: TV LG ou Fire Stick.');
+      if (!SUPPORTED.has(kind)) throw new Error('Por enquanto: TV LG, Fire Stick ou Android com ADB.');
       if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(ip)) throw new Error('IP inválido');
       if (config.devices.some((d) => d.ip === ip && d.kind === kind)) throw new Error('Esse aparelho já está na lista');
       const device = { id: `${kind}-${ip.replace(/\./g, '')}`, kind, name: KIND_NAME[kind], ip };
@@ -174,7 +188,10 @@ async function handle(msg) {
       if (tv) {
         return tv.run(msg.args.key === 'mute' ? 'mute' : msg.args.key);
       }
-      return drv.run(String(msg.action), msg.args ?? {});
+      const data = await drv.run(String(msg.action), msg.args ?? {});
+      if (msg.action === 'apps' && device.kind === 'fire') return rememberIcons(data);
+      if (msg.action === 'apps' && device.kind === 'android') return withIcons(data);
+      return data;
     }
   }
 }

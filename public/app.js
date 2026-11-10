@@ -73,7 +73,8 @@ const buzz = (ms = 12) => { try { navigator.vibrate?.(ms); } catch {} };
 const selected = () => devices.find((d) => d.id === selectedId) ?? devices[0];
 const isTv = (d) => d && (d.kind === 'lg' || d.kind === 'netcast');
 const lgDevice = () => devices.find(isTv);
-const KIND_LABEL = { lg: 'TV LG', netcast: 'TV LG (2012–2013)', fire: 'Fire Stick' };
+const KIND_LABEL = { lg: 'TV LG', netcast: 'TV LG (2012–2013)', fire: 'Fire Stick', android: 'Projetor Android' };
+const usesFireApps = (d) => d.kind === 'fire' || d.kind === 'android';
 
 const STATE_TEXT = {
   conectada: 'Conectado',
@@ -137,13 +138,14 @@ function updateStatus(cur) {
 
   const lg = lgDevice();
   const note = $('[data-vol-note]', remote);
-  if (note) note.textContent = lg?.state === 'conectada' ? `Volume e mudo vão para a ${lg.name}` : '';
-  for (const el of remote.querySelectorAll('[data-needs="lg"]')) el.hidden = !lg;
+  if (note) note.textContent = cur.kind === 'fire' && lg?.state === 'conectada' ? `Volume e mudo vão para a ${lg.name}` : '';
+  // O projetor tem entradas próprias (HDMI/AV); no Fire o botão troca a entrada da TV LG.
+  for (const el of remote.querySelectorAll('[data-needs="lg"]')) el.hidden = cur.kind !== 'android' && !lg;
   // Pelo canal do PIN o Fire não tem essas teclas; a TV antiga não recebe texto.
   for (const el of remote.querySelectorAll('[data-adb]')) el.hidden = cur.kind === 'fire' && cur.mode === 'pin';
   for (const el of remote.querySelectorAll('[data-webos]')) el.hidden = cur.kind === 'netcast';
 
-  if (cur.kind === 'fire' && cur.state === 'conectada' && appsLoadedFor !== cur.id) loadFireApps(cur);
+  if (usesFireApps(cur) && cur.state === 'conectada' && appsLoadedFor !== cur.id) loadFireApps(cur);
 }
 
 function noticeFor(d) {
@@ -167,6 +169,11 @@ function noticeFor(d) {
     return [h('div', { class: 'notice' }, h('b', {}, 'Olhe a TV: '), 'o Fire pergunta se permite a depuração. Marque ', h('b', {}, '“Sempre permitir deste computador”'), ' e toque em OK.')];
   }
   if (d.state === 'precisa-pin') return [pairBox(d)];
+  if (d.kind === 'android') {
+    return [h('div', { class: 'notice notice--bad' }, h('b', {}, 'Projetor fora da rede. '),
+      'Ligue no botão do projetor; quando ele entrar no Wi-Fi, o controle volta sozinho. ', d.ip,
+      h('div', { class: 'notice__actions' }, retry))];
+  }
   return [h('div', { class: 'notice notice--bad' }, h('b', {}, 'Fire Stick fora da rede. '), d.ip, h('div', { class: 'notice__actions' }, retry))];
 }
 
@@ -257,7 +264,7 @@ function appButton(dev, a, after) {
 }
 
 function openFireApps(dev) {
-  showSheet('Apps do Fire', h('div', { class: 'apps apps--all' }, ...fireApps.map((a) => appButton(dev, a, closeSheet))));
+  showSheet(dev.kind === 'android' ? 'Apps do projetor' : 'Apps do Fire', h('div', { class: 'apps apps--all' }, ...fireApps.map((a) => appButton(dev, a, closeSheet))));
 }
 async function loadFireApps(dev) {
   appsLoadedFor = dev.id;
@@ -295,7 +302,7 @@ backdrop.addEventListener('click', closeSheet);
 for (const b of document.querySelectorAll('[data-close-sheet]')) b.addEventListener('click', closeSheet);
 
 function openSheet(kind, dev) {
-  if (kind === 'inputs') return openInputs();
+  if (kind === 'inputs') return openInputs(dev);
   if (kind === 'apps') {
     if (dev.kind === 'netcast') return run(dev.id, 'key', { key: 'APPS' });
     return openLgApps(dev);
@@ -306,20 +313,24 @@ function openSheet(kind, dev) {
   if (kind === 'touchpad') return openTouchpad(dev);
 }
 
-async function openInputs() {
-  const tv = lgDevice();
+async function openInputs(dev) {
+  const tv = dev?.kind === 'android' ? dev : lgDevice();
   if (!tv) return toast('Nenhuma TV LG cadastrada');
   if (tv.kind === 'netcast') { run(tv.id, 'key', { key: 'INPUT' }); return toast('Escolha a entrada na TV com o direcional'); }
   const list = h('div', { class: 'list' }, h('p', { class: 'empty' }, 'Perguntando à TV…'));
-  showSheet('Entradas da TV', list);
+  showSheet(tv.kind === 'android' ? 'Entradas do projetor' : 'Entradas da TV', list);
   try {
     const inputs = await call({ device: tv.id, action: 'inputs' });
+    const where = tv.kind === 'android' ? 'Projetor' : 'TV';
     list.replaceChildren(...inputs.map((i) => h('button', {
-      class: `list__item${i.connected ? '' : ' list__item--off'}`,
-      onclick: () => { buzz(); run(tv.id, 'setInput', { id: i.id }); closeSheet(); toast(`TV em ${i.label}`); },
-    }, h('span', {}, i.label), h('small', {}, i.connected ? 'conectado' : 'vazio'))),
-    h('button', { class: 'list__item', onclick: () => { buzz(); run(tv.id, 'launch', { id: 'com.webos.app.livetv' }); closeSheet(); } },
-      h('span', {}, 'TV ao vivo (antena)'), h('small', {}, '')));
+      class: `list__item${i.connected === false ? ' list__item--off' : ''}`,
+      onclick: () => { buzz(); run(tv.id, 'setInput', { id: i.id }); closeSheet(); toast(`${where} em ${i.label}`); },
+    }, h('span', {}, i.label), h('small', {}, i.connected ? 'conectado' : i.connected === false ? 'vazio' : ''))),
+    tv.kind === 'android'
+      ? h('button', { class: 'list__item', onclick: () => { buzz(); run(tv.id, 'key', { key: 'home' }); closeSheet(); } },
+        h('span', {}, 'Android (tela inicial)'), h('small', {}, ''))
+      : h('button', { class: 'list__item', onclick: () => { buzz(); run(tv.id, 'launch', { id: 'com.webos.app.livetv' }); closeSheet(); } },
+        h('span', {}, 'TV ao vivo (antena)'), h('small', {}, '')));
     if (!inputs.length) list.prepend(h('p', { class: 'empty' }, 'A TV não listou entradas.'));
   } catch (e) {
     list.replaceChildren(h('p', { class: 'empty' }, `Não deu: ${e.message}`));
@@ -474,7 +485,7 @@ function deviceCard(d) {
 
 function addForm() {
   const kind = h('select', { 'aria-label': 'Tipo' },
-    h('option', { value: 'lg' }, 'TV LG (webOS)'), h('option', { value: 'netcast' }, 'TV LG 2012–2013'), h('option', { value: 'fire' }, 'Fire Stick'));
+    h('option', { value: 'lg' }, 'TV LG (webOS)'), h('option', { value: 'netcast' }, 'TV LG 2012–2013'), h('option', { value: 'fire' }, 'Fire Stick'), h('option', { value: 'android' }, 'Android (projetor/TV box)'));
   const ip = h('input', { inputmode: 'decimal', placeholder: '192.168.15.20', 'aria-label': 'IP' });
   return h('div', { class: 'add' }, kind, ip, h('button', { class: 'btn btn--sm', style: { height: '44px' }, onclick: () => {
     call({ op: 'add', kind: kind.value, ip: ip.value }).then(() => { toast('Adicionado'); ip.value = ''; }).catch(() => {});

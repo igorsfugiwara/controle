@@ -54,6 +54,9 @@ se mudarem de IP, mas o link do celular depende do IP do PC.
 - **TV LG:** liga/desliga (liga pela rede), entradas (HDMI etc.), volume, canal, mudo, números,
   direcional, OK, voltar, início, sair, botões coloridos, mídia, info, guia, apagar só a tela,
   apps, teclado e touchpad (cursor da Magic Remote).
+- **Projetor / TV box Android com ADB aberto** (tipo “Android”, cadastrado pelo IP): o mesmo
+  controle do Fire, com volume do próprio aparelho, entradas HDMI/AV (lidas do TV Input
+  Framework) e atalhos dos apps, com a arte oficial emprestada do Fire quando ele está pareado.
 
 ## Testes
 
