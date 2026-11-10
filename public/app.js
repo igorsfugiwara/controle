@@ -498,10 +498,10 @@ function deviceCard(d) {
         if (name) call({ op: 'rename', device: d.id, name }).catch(() => {});
       } }, 'Renomear'),
       d.kind === 'samsung' ? h('button', { class: 'btn btn--sm', onclick: () => {
-        const next = d.backMode === 'press' ? 'click' : 'press';
+        const next = d.backMode === 'click' ? 'press' : 'click';
         call({ op: 'option', device: d.id, key: 'backMode', value: next })
-          .then(() => toast(next === 'press' ? 'Voltar: modo 2 (apertar e soltar)' : 'Voltar: modo 1 (padrão)')).catch(() => {});
-      } }, `Voltar: modo ${d.backMode === 'press' ? 2 : 1}`) : null,
+          .then(() => toast(next === 'click' ? 'Voltar: modo 2 (clique)' : 'Voltar: modo 1 (padrão, apertar e soltar)')).catch(() => {});
+      } }, `Voltar: modo ${d.backMode === 'click' ? 2 : 1}`) : null,
       h('button', { class: 'btn btn--sm btn--danger', onclick: () => {
         if (confirm(`Tirar “${d.name}” da lista? Dá para achar de novo depois.`)) call({ op: 'remove', device: d.id }).catch(() => {});
       } }, 'Tirar')));

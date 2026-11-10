@@ -154,13 +154,17 @@ export class SamsungTv extends EventEmitter {
 
   remote(params) { this.send({ method: 'ms.remote.control', params: { TypeOfRemote: 'SendRemoteKey', Option: 'false', ...params } }); }
 
-  /** Toque normal = Click. O "voltar" pode ir como apertar/soltar, igual ao controle físico. */
+  /**
+   * Toque normal = Click. O "voltar" vai como apertar/soltar, igual ao controle físico: muitas
+   * Samsung ignoram o Click do KEY_RETURN dentro dos apps (o defeito que os apps de controle têm).
+   * backMode 'click' volta ao jeito comum, caso alguma TV prefira.
+   */
   key(code, { long = false } = {}) {
     if (long) {
       this.remote({ Cmd: 'Press', DataOfCmd: code });
       return new Promise((r) => setTimeout(() => { try { this.remote({ Cmd: 'Release', DataOfCmd: code }); } catch {} r(); }, 1200));
     }
-    if (code === 'KEY_RETURN' && this.device.backMode === 'press') {
+    if (code === 'KEY_RETURN' && this.device.backMode !== 'click') {
       this.remote({ Cmd: 'Press', DataOfCmd: code });
       return new Promise((r) => setTimeout(() => { try { this.remote({ Cmd: 'Release', DataOfCmd: code }); } catch {} r(); }, 60));
     }

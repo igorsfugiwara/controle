@@ -57,6 +57,7 @@ test('conecta, guarda token e MAC, manda teclas, apps e texto', async () => {
   assert.ok(saves >= 2);
   assert.match(tv.seen[0].url, /name=Q29udHJvbGU=/); // "Controle" em base64
 
+  // Padrão: o voltar vai como apertar e soltar, igual ao controle físico.
   await s.run('key', { key: 'BACK' });
   await s.run('volumeUp');
   await s.run('key', { key: 'blue' });
@@ -64,12 +65,12 @@ test('conecta, guarda token e MAC, manda teclas, apps e texto', async () => {
   await assert.rejects(s.run('key', { key: 'NAOEXISTE' }), /não existe/);
   await assert.rejects(s.run('setInput', { id: 'KEY_POWER' }), /inválida/);
 
-  // Voltar no modo 2: apertar e soltar, como o controle físico.
-  device.backMode = 'press';
+  // Modo 2: o voltar vira clique, como nos outros apps.
+  device.backMode = 'click';
   await s.run('key', { key: 'BACK' });
   await until(() => remoteKeys(tv.seen).length >= 6);
   assert.deepEqual(remoteKeys(tv.seen), [
-    'Click:KEY_RETURN', 'Click:KEY_VOLUP', 'Click:KEY_CYAN', 'Click:KEY_HDMI2', 'Press:KEY_RETURN', 'Release:KEY_RETURN',
+    'Press:KEY_RETURN', 'Release:KEY_RETURN', 'Click:KEY_VOLUP', 'Click:KEY_CYAN', 'Click:KEY_HDMI2', 'Click:KEY_RETURN',
   ]);
 
   const apps = await s.run('apps');

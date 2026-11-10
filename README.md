@@ -57,7 +57,8 @@ se mudarem de IP, mas o link do celular depende do IP do PC.
 - **TV Samsung (Tizen, 2016+):** liga (Wake-on-LAN, com “Ligar com dispositivo móvel”) e
   desliga, volume, canal, mudo, números, direcional, OK, voltar, início, sair, cores, mídia,
   info, guia, fontes (HDMI 1–4 ou a lista da TV), apps instalados, teclado e touchpad. O
-  “voltar” tem dois modos (clique ou apertar/soltar), trocados no cartão da TV.
+  “voltar” vai como apertar/soltar, igual ao controle físico, porque o clique que os apps de
+  controle mandam falha nas Samsung; o clique fica como modo 2, no cartão da TV.
 - **Projetor / TV box Android com ADB aberto** (tipo “Android”, cadastrado pelo IP): o mesmo
   controle do Fire, com volume do próprio aparelho, entradas HDMI/AV (lidas do TV Input
   Framework) e atalhos dos apps, com a arte oficial emprestada do Fire quando ele está pareado.
